@@ -1,6 +1,8 @@
-import { ref } from 'vue'
+import { ref, computed } from 'vue'
 import { defineStore } from 'pinia'
-import type { Document, OCRResult, Annotation } from '../types'
+import type { Document, OCRResult, Annotation, VariantEntry, VariantEntryCreate, VariantEntryUpdate } from '../types'
+
+const API_BASE = '/api'
 
 export const useOcrStore = defineStore('ocr', () => {
   const documents = ref<Document[]>([])
@@ -8,6 +10,10 @@ export const useOcrStore = defineStore('ocr', () => {
   const isLoading = ref(false)
   const searchQuery = ref('')
   const searchResults = ref<OCRResult[]>([])
+
+  const variantEntries = ref<VariantEntry[]>([])
+  const variantLoading = ref(false)
+  const variantSearchQuery = ref('')
 
   // Mock data
   const MOCK_DOC: Document = {
@@ -27,10 +33,93 @@ export const useOcrStore = defineStore('ocr', () => {
     createdAt: '2025-01-15'
   }
 
-  const VARIANT_DICT: Record<string, string> = {
-    '説': '说', '學': '学', '習': '习', '遠': '远', '樂': '乐', '書': '书',
-    '國': '国', '東': '东', '長': '长', '門': '门', '馬': '马', '鳥': '鸟',
-    '風': '风', '雲': '云', '龍': '龙', '車': '车', '萬': '万', '見': '见',
+  const variantDict = computed(() => {
+    const dict: Record<string, string> = {}
+    for (const e of variantEntries.value) {
+      dict[e.ancient] = e.modern
+    }
+    return dict
+  })
+
+  const filteredVariantEntries = computed(() => {
+    const q = variantSearchQuery.value.trim()
+    if (!q) return variantEntries.value
+    return variantEntries.value.filter(e =>
+      e.ancient.includes(q) || e.modern.includes(q) || e.definition.includes(q)
+    )
+  })
+
+  function getVariantEntryById(id: string): VariantEntry | undefined {
+    return variantEntries.value.find(e => e.id === id)
+  }
+
+  async function fetchVariantEntries(ancient?: string, modern?: string) {
+    variantLoading.value = true
+    try {
+      const params = new URLSearchParams()
+      if (ancient) params.set('ancient', ancient)
+      if (modern) params.set('modern', modern)
+      const resp = await fetch(`${API_BASE}/variants?${params.toString()}`)
+      if (resp.ok) {
+        variantEntries.value = await resp.json()
+      }
+    } catch {
+      console.error('Failed to fetch variant entries')
+    } finally {
+      variantLoading.value = false
+    }
+  }
+
+  async function createVariantEntry(data: VariantEntryCreate) {
+    try {
+      const resp = await fetch(`${API_BASE}/variants`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(data),
+      })
+      if (resp.ok) {
+        const entry = await resp.json()
+        variantEntries.value.unshift(entry)
+        return entry
+      }
+    } catch {
+      console.error('Failed to create variant entry')
+    }
+    return null
+  }
+
+  async function updateVariantEntry(id: string, data: VariantEntryUpdate) {
+    try {
+      const resp = await fetch(`${API_BASE}/variants/${id}`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(data),
+      })
+      if (resp.ok) {
+        const updated = await resp.json()
+        const idx = variantEntries.value.findIndex(e => e.id === id)
+        if (idx !== -1) {
+          variantEntries.value[idx] = updated
+        }
+        return updated
+      }
+    } catch {
+      console.error('Failed to update variant entry')
+    }
+    return null
+  }
+
+  async function deleteVariantEntry(id: string) {
+    try {
+      const resp = await fetch(`${API_BASE}/variants/${id}`, { method: 'DELETE' })
+      if (resp.ok) {
+        variantEntries.value = variantEntries.value.filter(e => e.id !== id)
+        return true
+      }
+    } catch {
+      console.error('Failed to delete variant entry')
+    }
+    return false
   }
 
   function loadMockDocument() {
@@ -79,7 +168,7 @@ export const useOcrStore = defineStore('ocr', () => {
   }
 
   function convertVariant(text: string): string {
-    return text.split('').map(c => VARIANT_DICT[c] || c).join('')
+    return text.split('').map(c => variantDict.value[c] || c).join('')
   }
 
   function searchInDocuments(query: string) {
@@ -104,7 +193,9 @@ export const useOcrStore = defineStore('ocr', () => {
 
   return {
     documents, currentDoc, isLoading, searchQuery, searchResults,
+    variantEntries, variantLoading, variantSearchQuery, variantDict, filteredVariantEntries,
     loadMockDocument, uploadAndOCR, addAnnotation, removeAnnotation,
-    convertVariant, searchInDocuments, exportTEI
+    convertVariant, searchInDocuments, exportTEI,
+    fetchVariantEntries, createVariantEntry, updateVariantEntry, deleteVariantEntry, getVariantEntryById,
   }
 })
